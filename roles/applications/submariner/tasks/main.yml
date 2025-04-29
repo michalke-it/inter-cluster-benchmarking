@@ -52,6 +52,7 @@
 - name: Deactivating Nebula
   shell: 
     cmd: "systemctl stop nebula"
+  ignore_errors: true
   delegate_to: "{{ current_host }}"
   loop: "{{ groups['headnodes'] }}"
   loop_control:
@@ -62,12 +63,31 @@
 - name: Deactivating Nebula
   shell: 
     cmd: "systemctl stop nebula"
+  ignore_errors: true
   delegate_to: "{{ current_host }}"
   loop: "{{ groups['workers'] }}"
   loop_control:
     loop_var: current_host
   when:
     - "not nebula | bool"
+
+#- name: Deleting old Submariner interfaces
+#  shell: 
+#    cmd: "ip link delete submariner"
+#  ignore_errors: true
+#  delegate_to: "{{ current_host }}"
+#  loop: "{{ groups['headnodes'] }}"
+#  loop_control:
+#    loop_var: current_host
+#
+#- name: Deleting old Submariner interfaces
+#  shell: 
+#    cmd: "ip link delete submariner"
+#  ignore_errors: true
+#  delegate_to: "{{ current_host }}"
+#  loop: "{{ groups['workers'] }}"
+#  loop_control:
+#    loop_var: current_host
 
 - name: Download submariner ctl to localhost
   shell: |

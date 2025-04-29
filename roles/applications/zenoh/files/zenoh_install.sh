@@ -7,8 +7,7 @@ for worker in $(sudo -E kubectl get nodes | grep -v control-plane | grep -v NAME
     sudo -E kubectl label node $worker node-role.kubernetes.io/worker=worker
 done
 sudo -E kubectl apply -f ${PAYLOAD_DIR}/memory-defaults.yaml
-sudo -E kubectl apply -f ${PAYLOAD_DIR}/mosquitto.yaml
-sudo -E kubectl apply -f ${PAYLOAD_DIR}/mosquitto-svc.yaml
-sudo -E kubectl apply -f ${PAYLOAD_DIR}/mosquitto-cfgmap.yaml
-sudo -E kubectl rollout status -w deployment/mosquitto
-#sudo -E kubectl autoscale deployment mosquitto --cpu-percent=50 --min=1 --max=$1
+sudo -E kubectl apply -f ${PAYLOAD_DIR}/zenoh.yaml
+sudo -E kubectl apply -f ${PAYLOAD_DIR}/zenoh-svc.yaml
+sudo -E kubectl apply -f ${PAYLOAD_DIR}/zenoh-cfgmap.yaml
+sudo -E kubectl rollout status -w deployment/zenoh

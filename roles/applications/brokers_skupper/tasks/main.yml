@@ -1,0 +1,203 @@
+---
+# tasks file for roles/applications/jmeter_kubernetes
+
+- name: Define payload values
+  set_fact:
+#    payloadValues: ["60","1024"]
+    payloadValues: ["60","1024","2048","10240","102400","1048576"]
+
+- name: Export mosquitto service name on server
+  become: yes
+  shell:
+    cmd: "KUBECONFIG=/etc/rancher/k3s/k3s.yaml /tmp/benchfaster/skupper/skupper expose service --namespace default mosquitto-cluster.default --address mosquitto-skupper --port 1883"
+  delegate_to: "{{ groups['headnodes'][0] }}"
+
+- name: Export rabbitmq service name on server
+  become: yes
+  shell:
+    cmd: "KUBECONFIG=/etc/rancher/k3s/k3s.yaml /tmp/benchfaster/skupper/skupper expose service --namespace default rabbitmq-cluster.default --address rabbitmq-skupper --port 5672"
+  delegate_to: "{{ groups['headnodes'][0] }}"
+
+- name: Export zenoh service name on server
+  become: yes
+  shell:
+    cmd: "KUBECONFIG=/etc/rancher/k3s/k3s.yaml /tmp/benchfaster/skupper/skupper expose service --namespace default zenoh-cluster.default --address zenoh-skupper --port 7447"
+  delegate_to: "{{ groups['headnodes'][0] }}"
+
+#TODO: split this into separate benchmarking role and include remote benchmarking https://jmeter.apache.org/usermanual/get-started.html#non_gui
+
+- name: Create benchmarking pod
+  become: yes
+  shell: |
+    echo "
+    apiVersion: v1
+    kind: PersistentVolume
+    metadata:
+      name: jmeter-data-volume
+      namespace: default
+      labels:
+        type: local
+    spec:
+      storageClassName: manual
+      capacity:
+        storage: 10Gi
+      accessModes:
+        - ReadWriteOnce
+      claimRef:
+         namespace: default
+         name: jmeter-data-claim
+      hostPath:
+        path: "/tmp/benchfaster"
+      nodeAffinity:
+        required:
+          nodeSelectorTerms:
+          - matchExpressions:
+            - key: node-role.kubernetes.io/worker
+              operator: In
+              values:
+              - worker
+    ---
+    apiVersion: v1
+    kind: PersistentVolumeClaim
+    metadata:
+      name: jmeter-data-claim
+      namespace: default
+    spec:
+      storageClassName: manual
+      accessModes:
+        - ReadWriteOnce
+      resources:
+        requests:
+          storage: 10Gi
+    ---
+    apiVersion: apps/v1
+    kind: Deployment
+    metadata:
+      name: benchmark-deployment
+      labels:
+        app: benchmark-pod
+    spec:
+      selector:
+        matchLabels:
+          app: benchmark-pod
+      template:
+        metadata:
+          labels:
+            app: benchmark-pod
+        spec:
+          nodeSelector:
+            node-role.kubernetes.io/worker: worker
+          containers:
+            - name: benchmark-pod
+              image: registry.gitlab.com/m4rl4/brokerperformance:latest
+              imagePullPolicy: Always
+              command: ['/bin/sh', '-c', 'sleep infinity']
+              volumeMounts:
+                - mountPath: "/tmp/benchfaster"
+                  name: jmeter
+              resources:
+                limits:
+                  memory: "2Gi"
+                  cpu: "2000m"
+          volumes:
+            - name: jmeter
+              persistentVolumeClaim:
+                claimName: jmeter-data-claim
+          terminationGracePeriodSeconds: 0
+    " | kubectl apply -f -
+  delegate_to: "{{ current_host }}"
+  loop: "{{ groups['headnodes'] }}"
+  loop_control:
+    loop_var: current_host
+  when:
+    - "current_host != groups['headnodes'][0]"
+
+- name: Wait for benchmark pod to become ready
+  become: yes
+  shell: kubectl rollout status deployment benchmark-deployment
+  retries: 10
+  delay: 5
+  delegate_to: "{{ current_host }}"
+  loop: "{{ groups['headnodes'] }}"
+  loop_control:
+    loop_var: current_host
+  when:
+    - "current_host != groups['headnodes'][0]"
+
+- name: log the current latency to the nebula lighthouse
+  become: yes
+  shell: |
+    kubectl exec -i deploy/benchmark-deployment -- bash -c "/usr/bin/ping -c 4 {{ address_benchmark }} | tee {{ results_path.path }}/latency_nebula_{{ network.name }}.chk"
+  delegate_to: "{{ groups['headnodes'][1] }}"
+
+- name: Test rabbitmq for functionality through skupper
+  become: yes
+  shell: |
+    kubectl exec -i deploy/benchmark-deployment -- nc -zv rabbitmq-skupper 5672
+  retries: 3
+  delay: 5
+  delegate_to: "{{ current_host }}"
+  loop: "{{ groups['headnodes'] }}"
+  loop_control:
+    loop_var: current_host
+  when:
+    - "current_host != groups['headnodes'][0]"
+
+- name: Test mosquitto for functionality through skupper
+  become: yes
+  shell: |
+    kubectl exec -i deploy/benchmark-deployment -- nc -zv mosquitto-skupper 1883
+  retries: 3
+  delay: 5
+  delegate_to: "{{ current_host }}"
+  loop: "{{ groups['headnodes'] }}"
+  loop_control:
+    loop_var: current_host
+  when:
+    - "current_host != groups['headnodes'][0]"
+
+- name: Test zenoh for functionality through skupper
+  become: yes
+  shell: |
+    kubectl exec -i deploy/benchmark-deployment -- nc -zv zenoh-skupper 7447
+  retries: 3
+  delay: 5
+  delegate_to: "{{ current_host }}"
+  loop: "{{ groups['headnodes'] }}"
+  loop_control:
+    loop_var: current_host
+  when:
+    - "current_host != groups['headnodes'][0]"
+
+- name: Test Mosquitto through Skupper 
+  shell: |
+    kubectl exec -i deploy/benchmark-deployment -- python /opt/brokertestingwithlogging.py --payload {{ payloadSize }} \
+      -m mosquitto-skupper:1883 \
+      --warm-up 5 \
+      -o {{ results_path.path }}/mosquitto_{{ payloadSize }}_skupper_{{ network.name }}.csv
+  delegate_to: "{{ groups['headnodes'][1] }}"
+  loop: "{{ payloadValues }}"
+  loop_control:
+    loop_var: payloadSize
+
+- name: Test RabbitMQ through Skupper
+  shell: |
+    kubectl exec -i deploy/benchmark-deployment -- python /opt/brokertestingwithlogging.py --payload {{ payloadSize }} \
+      -r rabbitmq-skupper:5672 \
+      --warm-up 5 \
+      -o {{ results_path.path }}/rabbitmq_{{ payloadSize }}_skupper_{{ network.name }}.csv
+  delegate_to: "{{ groups['headnodes'][1] }}"
+  loop: "{{ payloadValues }}"
+  loop_control:
+    loop_var: payloadSize
+
+- name: Test Zenoh through Skupper
+  shell: |
+    kubectl exec -i deploy/benchmark-deployment -- python /opt/brokertestingwithlogging.py --payload {{ payloadSize }} \
+      -z zenoh-skupper:7447 \
+      --warm-up 5 \
+      -o {{ results_path.path }}/zenoh_{{ payloadSize }}_skupper_{{ network.name }}.csv
+  delegate_to: "{{ groups['headnodes'][1] }}"
+  loop: "{{ payloadValues }}"
+  loop_control:
+    loop_var: payloadSize

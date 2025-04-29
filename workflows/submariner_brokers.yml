@@ -1,0 +1,13 @@
+- ansible.builtin.include_role:
+    name: "{{ role_item }}"
+  with_items:
+    - benchfaster/start-multi-cluster
+    - benchfaster/registry-add
+    - applications/submariner
+    - applications/mosquitto
+    - applications/rabbitmq
+    - applications/zenoh
+    - applications/brokers_submariner
+    - benchfaster/stop
+  loop_control:
+    loop_var: role_item

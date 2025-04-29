@@ -2,7 +2,7 @@ apiVersion: v1
 kind: Service
 metadata:
    name: mosquitto-nodeport
-   namespace: mosquitto
+   namespace: default
    labels:
       run: mosquitto
 spec:
@@ -10,8 +10,23 @@ spec:
       run: mosquitto
    type: NodePort
    ports:
-   - name: mqtt
+   - name: mqtt-ext
      port: 1883
      targetPort: 1883
      nodePort: 31883
+     protocol: TCP
+---
+apiVersion: v1
+kind: Service
+metadata:
+   name: mosquitto-cluster
+   namespace: default
+spec:
+   selector:
+      run: mosquitto
+   type: ClusterIP
+   ports:
+   - name: mqtt-int
+     port: 1883
+     targetPort: 1883
      protocol: TCP

@@ -1,0 +1,230 @@
+---
+# tasks file for roles/applications/jmeter_kubernetes
+
+- name: Define payload values
+  set_fact: 
+    payloadValues: ["60","1024","2048","10240","102400","1048576"]
+#    payloadValues: ["60","1024"]
+
+#- name: Export dummy service name on server
+#  become: yes
+#  shell: |
+#      KUBECONFIG=/etc/rancher/k3s/k3s.yaml kubectl create deployment nginx --image=nginx && \
+#      KUBECONFIG=/etc/rancher/k3s/k3s.yaml kubectl expose deployment nginx --port=80 && \
+#      KUBECONFIG=/etc/rancher/k3s/k3s.yaml /tmp/benchfaster/submariner/bin/subctl export service --namespace default nginx
+#  delegate_to: "{{ groups['headnodes'][0] }}"
+
+- name: Export mosquitto service name on server
+  become: yes
+  shell:
+    cmd: "KUBECONFIG=/etc/rancher/k3s/k3s.yaml /tmp/benchfaster/submariner/bin/subctl export service --namespace default mosquitto-cluster"
+  delegate_to: "{{ groups['headnodes'][0] }}"
+
+- name: Export rabbitmq service name on server
+  become: yes
+  shell:
+    cmd: "KUBECONFIG=/etc/rancher/k3s/k3s.yaml /tmp/benchfaster/submariner/bin/subctl export service --namespace default rabbitmq-cluster"
+  delegate_to: "{{ groups['headnodes'][0] }}"
+
+- name: Export zenoh service name on server
+  become: yes
+  shell:
+    cmd: "KUBECONFIG=/etc/rancher/k3s/k3s.yaml /tmp/benchfaster/submariner/bin/subctl export service --namespace default zenoh-cluster"
+  delegate_to: "{{ groups['headnodes'][0] }}"
+
+- name: Create benchmarking pod
+  become: yes
+  shell: |
+    echo "
+    apiVersion: v1
+    kind: PersistentVolume
+    metadata:
+      name: jmeter-data-volume
+      namespace: default
+      labels:
+        type: local
+    spec:
+      storageClassName: manual
+      capacity:
+        storage: 10Gi
+      accessModes:
+        - ReadWriteOnce
+      claimRef:
+         namespace: default
+         name: jmeter-data-claim
+      hostPath:
+        path: "/tmp/benchfaster"
+      nodeAffinity:
+        required:
+          nodeSelectorTerms:
+          - matchExpressions:
+            - key: node-role.kubernetes.io/worker
+              operator: In
+              values:
+              - worker
+    ---
+    apiVersion: v1
+    kind: PersistentVolumeClaim
+    metadata:
+      name: jmeter-data-claim
+      namespace: default
+    spec:
+      storageClassName: manual
+      accessModes:
+        - ReadWriteOnce
+      resources:
+        requests:
+          storage: 10Gi
+    ---
+    apiVersion: apps/v1
+    kind: Deployment
+    metadata:
+      name: benchmark-deployment
+      labels:
+        app: benchmark-pod
+    spec:
+      selector:
+        matchLabels:
+          app: benchmark-pod
+      template:
+        metadata:
+          labels:
+            app: benchmark-pod
+        spec:
+          nodeSelector:
+            node-role.kubernetes.io/worker: worker
+          containers:
+            - name: benchmark-pod
+              image: registry.gitlab.com/m4rl4/brokerperformance:latest
+              imagePullPolicy: Always
+              command: ['/bin/sh', '-c', 'sleep infinity']
+              volumeMounts:
+                - mountPath: "/tmp/benchfaster"
+                  name: jmeter
+              resources:
+                limits:
+                  memory: "2Gi"
+                  cpu: "2000m"
+          volumes:
+            - name: jmeter
+              persistentVolumeClaim:
+                claimName: jmeter-data-claim
+          terminationGracePeriodSeconds: 0
+    " | kubectl apply -f -
+  delegate_to: "{{ current_host }}"
+  loop: "{{ groups['headnodes'] }}"
+  loop_control:
+    loop_var: current_host
+  when:
+    - "current_host != groups['headnodes'][0]"
+#    ("current_host != groups['headnodes'][0]") or
+#    ("current_host != groups['headnodes'][1]")
+
+- name: Wait for benchmark pod to become ready
+  become: yes
+  shell: kubectl rollout status deployment benchmark-deployment
+  retries: 10
+  delay: 5
+  delegate_to: "{{ current_host }}"
+  loop: "{{ groups['headnodes'] }}"
+  loop_control:
+    loop_var: current_host
+  when:
+    - "current_host != groups['headnodes'][0]"
+
+- name: log the current latency to the nebula lighthouse
+  become: yes
+  shell: |
+    kubectl exec -i deploy/benchmark-deployment -- bash -c "/usr/bin/ping -c 4 {{ address_benchmark }} | tee {{ results_path.path }}/latency_nebula_{{ network.name }}.chk"
+  delegate_to: "{{ groups['headnodes'][1] }}"
+
+#- name: Test dummy for functionality through submariner
+#  become: yes
+#  shell: |
+#    kubectl exec -i deploy/benchmark-deployment -- nc -zv nginx.default.svc.clusterset.local 80
+#  retries: 3
+#  delay: 5
+#  delegate_to: "{{ current_host }}"
+#  loop: "{{ groups['headnodes'] }}"
+#  loop_control:
+#    loop_var: current_host
+#  when:
+#    - "current_host != groups['headnodes'][0]"
+
+- name: Test rabbitmq for functionality through submariner
+  become: yes
+  shell: |
+    kubectl exec -i deploy/benchmark-deployment -- nc -zv rabbitmq-cluster.default.svc.clusterset.local 5672
+  retries: 3
+  delay: 5
+  delegate_to: "{{ current_host }}"
+  loop: "{{ groups['headnodes'] }}"
+  loop_control:
+    loop_var: current_host
+  when:
+    - "current_host != groups['headnodes'][0]"
+
+- name: Test mosquitto for functionality through submariner
+  become: yes
+  shell: |
+    kubectl exec -i deploy/benchmark-deployment -- nc -zv mosquitto-cluster.default.svc.clusterset.local 1883
+  retries: 3
+  delay: 5
+  delegate_to: "{{ current_host }}"
+  loop: "{{ groups['headnodes'] }}"
+  loop_control:
+    loop_var: current_host
+  when:
+    - "current_host != groups['headnodes'][0]"
+
+- name: Test zenoh for functionality through submariner
+  become: yes
+  shell: |
+    kubectl exec -i deploy/benchmark-deployment -- nc -zv zenoh-cluster.default.svc.clusterset.local 7447
+  retries: 3
+  delay: 5
+  delegate_to: "{{ current_host }}"
+  loop: "{{ groups['headnodes'] }}"
+  loop_control:
+    loop_var: current_host
+  when:
+    - "current_host != groups['headnodes'][0]"
+
+- name: Show Submariner config
+  become: yes
+  shell:
+    cmd: "KUBECONFIG=/etc/rancher/k3s/k3s.yaml /tmp/benchfaster/submariner/bin/subctl show all"
+  delegate_to: "{{ groups['headnodes'][0] }}"
+
+- name: Test Zenoh through submariner 
+  shell: |
+    kubectl exec -i deploy/benchmark-deployment -- python /opt/brokertestingwithlogging.py --payload {{ payloadSize }} \
+      -z zenoh-cluster.default.svc.clusterset.local:7447 \
+      --warm-up 5 \
+      -o {{ results_path.path }}/zenoh_{{ payloadSize }}_submariner_{{ network.name }}.csv
+  delegate_to: "{{ groups['headnodes'][1] }}"
+  loop: "{{ payloadValues }}"
+  loop_control:
+    loop_var: payloadSize
+
+- name: Test mosquitto through submariner 
+  shell: |
+    kubectl exec -i deploy/benchmark-deployment -- python /opt/brokertestingwithlogging.py --payload {{ payloadSize }} \
+      -m mosquitto-cluster.default.svc.clusterset.local:1883 \
+      --warm-up 5 \
+      -o {{ results_path.path }}/mosquitto_{{ payloadSize }}_submariner_{{ network.name }}.csv
+  delegate_to: "{{ groups['headnodes'][1] }}"
+  loop: "{{ payloadValues }}"
+  loop_control:
+    loop_var: payloadSize
+
+- name: Test RabbitMQ through submariner 
+  shell: |
+    kubectl exec -i deploy/benchmark-deployment -- python /opt/brokertestingwithlogging.py --payload {{ payloadSize }} \
+      -r rabbitmq-cluster.default.svc.clusterset.local:5672 \
+      --warm-up 5 \
+      -o {{ results_path.path }}/rabbitmq_{{ payloadSize }}_submariner_{{ network.name }}.csv
+  delegate_to: "{{ groups['headnodes'][1] }}"
+  loop: "{{ payloadValues }}"
+  loop_control:
+    loop_var: payloadSize

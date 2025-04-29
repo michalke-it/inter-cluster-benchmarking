@@ -1,0 +1,58 @@
+---
+# tasks file for reboot
+#- name: Reboot and wait for hosts to become available again
+#  ansible.builtin.reboot:
+#    msg: "Reboot initiated by Ansible"
+#    connect_timeout: 5      # Time in seconds to wait for SSH connection
+#    reboot_timeout: 600    # Maximum time to wait for the host to reboot
+#    post_reboot_delay: 30  # How long to wait after reboot before the next connection attempt
+#    test_command: whoami   # Command Ansible runs on the host to check if it's back online
+#  delegate_to: "{{ current_host }}"
+#  loop: "{{ groups['machines'] | difference(['localhost']) }}"
+#  loop_control:
+#    loop_var: current_host
+#  when: current_host != 'localhost'
+
+- name: Initiate reboot on each machine asynchronously
+  ansible.builtin.shell: reboot
+  async: 300                # Maximum runtime for the task in seconds
+  poll: 0                   # Fire and forget; do not wait for task to complete
+  ignore_errors: yes        # Continue playbook execution even if reboot fails
+  delegate_to: "{{ current_host }}"
+  loop: "{{ groups['machines'] | difference(['localhost']) }}"
+  loop_control:
+    loop_var: current_host
+  when: current_host != 'localhost'
+
+- name: Initiate reboot on each tester asynchronously
+  ansible.builtin.shell: reboot
+  async: 300                # Maximum runtime for the task in seconds
+  poll: 0                   # Fire and forget; do not wait for task to complete
+  ignore_errors: yes        # Continue playbook execution even if reboot fails
+  delegate_to: "{{ current_host }}"
+  loop: "{{ groups['testers'] | difference(['localhost']) }}"
+  loop_control:
+    loop_var: current_host
+  when: current_host != 'localhost'
+
+- name: Wait for each machine to become reachable
+  ansible.builtin.wait_for_connection:
+    timeout: 600             # Maximum time to wait for connection in seconds
+  delegate_to: "{{ current_host }}"
+  loop: "{{ groups['machines'] | difference(['localhost']) }}"
+  loop_control:
+    loop_var: current_host
+  when: current_host != 'localhost'
+  retries: 30                # Number of retry attempts
+  delay: 20                  # Delay between retries in seconds
+
+- name: Wait for each tester to become reachable
+  ansible.builtin.wait_for_connection:
+    timeout: 600             # Maximum time to wait for connection in seconds
+  delegate_to: "{{ current_host }}"
+  loop: "{{ groups['testers'] | difference(['localhost']) }}"
+  loop_control:
+    loop_var: current_host
+  when: current_host != 'localhost'
+  retries: 30                # Number of retry attempts
+  delay: 20                  # Delay between retries in seconds

@@ -18,6 +18,14 @@
       {{ registry.dname }}:{{ registry.port }}:
         endpoint:
           - http://{{ registry.dname }}:{{ registry.port }}
+      registry.gitlab.com:
+        endpoint:
+          - https://registry.gitlab.com/v2
+    configs:
+      registry.gitlab.com:
+        auth:
+          username: k3s
+          password: gldt-zrs2JizEdeXcsmsAgGGY
     EOF
     echo '{{ registry.ip }} {{ registry.dname }}' | tee -a /etc/hosts
     systemctl restart k3s*

@@ -2,7 +2,7 @@ apiVersion: v1
 kind: ConfigMap
 metadata:
   name: enabledplugins
-  namespace: rabbitmq
+  namespace: default
 data:
   enabled_plugins: |
     [rabbitmq_prometheus,rabbitmq_mqtt].

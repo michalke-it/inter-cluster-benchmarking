@@ -2,7 +2,7 @@
  kind: Deployment
  metadata:
    name: mosquitto
-   namespace: mosquitto
+   namespace: default
  spec:
    selector:
       matchLabels:
@@ -13,12 +13,23 @@
             run: mosquitto
       spec:
          containers:
-         - name: mosquitto-broker
-           image: eclipse-mosquitto:1.6.15
-           ports:
-           - containerPort: 1883
-           resources:
-             limits:
-               cpu: 500m
-             requests:
-               cpu: 200m
+           - name: mosquitto-broker
+             image: eclipse-mosquitto:2.0
+             ports:
+             - containerPort: 1883
+             resources:
+               limits:
+                 cpu: 500m
+               requests:
+                 cpu: 200m
+             volumeMounts:
+             - name: mosquitto-config-volume
+               mountPath: /mosquitto/config/mosquitto.conf
+               subPath: mosquitto.conf
+         volumes:
+           - name: mosquitto-config-volume
+             configMap:
+               name: mosquitto-config
+               items:
+                 - key: mosquitto.conf
+                   path: mosquitto.conf
